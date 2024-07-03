@@ -3,6 +3,7 @@ const nodemailer = require("nodemailer");
 const bodyParser = require("body-parser");
 const cors = require("cors");
 const uuid = require("uuid"); // To generate unique IDs for tracking
+const path = require("path");
 
 const app = express();
 app.use(cors());
@@ -56,17 +57,29 @@ function sendEmail(to, subject, body, url) {
       pass: emailAccounts[currentAccountIndex].pass,
     },
   });
-
   const mailOptions = {
     from: emailAccounts[currentAccountIndex].user,
     to,
     subject,
-    html: `${emailBody}<img src="http://localhost:3000/api/track-open?tid=${trackingId}" />`,
+    html: `${emailBody}<img src="https://1f81-115-186-141-70.ngrok-free.app/api/track-open?tid=123}" alt="Logo" title="Logo" style="display:block" width="200" height="87" />
+    `,
   };
 
   transporter.sendMail(mailOptions, (error, info) => {
     if (error) {
       console.error(`Error occurred when sending to ${to}:`, error);
+      const queryInsert = `
+  INSERT INTO email_statistics (uuid, subject, body, status,bounce)
+  VALUES ($1, $2, $3, 'sent',true)
+`;
+
+      pool.query(queryInsert, [trackingId, subject, body], (err, results) => {
+        if (err) {
+          console.error("Error storing tracking data:", err);
+        } else {
+          console.log("Tracking data stored successfully");
+        }
+      });
     } else {
       console.log(
         `Email sent successfully to ${to} from ${emailAccounts[currentAccountIndex].user}: ${info.response}`
@@ -98,7 +111,7 @@ app.post("/api/send-email", (req, res) => {
 app.get("/api/track-open", (req, res) => {
   const { tid } = req.query;
   console.log(`Email opened with tracking ID: ${tid}`);
-  res.sendFile(__dirname + "/transparent.png"); // Return a 1x1 pixel transparent image
+  res.sendFile(path.join(__dirname + "/ss.png")); // Return a 1x1 pixel transparent image
 });
 
 // Click tracking endpoint
@@ -109,7 +122,7 @@ app.get("/api/track-click", (req, res) => {
   // Update tracking data in the database
   const queryUpdate = `
       UPDATE email_statistics
-      SET status = 'clicked'
+      SET clicked = true
       WHERE uuid = $1
     `;
 
@@ -124,6 +137,47 @@ app.get("/api/track-click", (req, res) => {
       res.redirect(url);
     }
   });
+});
+
+app.get("/api/get-statistics", async (req, res) => {
+  try {
+    // Fetch total count
+    const totalQuery = "SELECT COUNT(*) AS total FROM email_statistics";
+    const totalResult = await pool.query(totalQuery);
+    const total = totalResult.rows[0].total;
+
+    // Fetch bounce count
+    const bounceQuery =
+      "SELECT SUM(CASE WHEN bounce = true THEN 1 ELSE 0 END) AS bounce FROM email_statistics";
+    const bounceResult = await pool.query(bounceQuery);
+    const bounce = bounceResult.rows[0].bounce;
+
+    // Fetch open count
+    const openQuery =
+      "SELECT SUM(CASE WHEN open = true THEN 1 ELSE 0 END) AS open FROM email_statistics";
+    const openResult = await pool.query(openQuery);
+    const open = openResult.rows[0].open;
+
+    // Fetch clicked count
+    const clickedQuery =
+      "SELECT SUM(CASE WHEN clicked = true THEN 1 ELSE 0 END) AS clicked FROM email_statistics";
+    const clickedResult = await pool.query(clickedQuery);
+    const clicked = clickedResult.rows[0].clicked;
+
+    // Construct JSON response
+    const responseData = {
+      total: total,
+      bounce: bounce,
+      open: open,
+      clicked: clicked,
+    };
+
+    // Send response
+    res.json(responseData);
+  } catch (err) {
+    console.error("Error fetching dashboard data:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 // Start the server
